@@ -14,7 +14,7 @@
 **Note: Some collection names or file names may cause issues. If you get errors try using a basic name such as `collection.db` or `collection.html` instead.**
 
 ## How to dump osu!Collector collections:
-1. Run "main.py", enter "1" to the prompt, choose if you want any special sorting, and enter the osu!Collector collectionID or URL. <sup><a href="#note1">1</a></sup>
+1. Run "main.py", enter "1" to the prompt, choose if you want any special filtering <sup><a href="#note1">1</a></sup>, and enter the osu!Collector collectionID or URL. <sup><a href="#note2">2</a></sup>
 2. You should have your collection.
 
 ## How to save your osu!api key:
@@ -30,7 +30,9 @@
 
 
 ### Notes:
-<p id="note1">1. When downloading with a star rating or bpm filter, osu!Collector pages (one page = 100 maps) are
+<p id="note1">1. If you want to filter by a min or max, enter 0 for the other option (ei: min=60, max=0). For a specific range,
+                   note that the range is <b> exclusive </b>. </p>
+<p id="note2">2. When downloading with a star rating or bpm filter, osu!Collector pages (one page = 100 maps) are
                    grabbed at 1 per second. Otherwise, all maps are grabbed instantly and all at once. </p>
 
 <br>

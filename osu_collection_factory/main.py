@@ -57,16 +57,21 @@ def main(s: util.Settings | None = None, api: api_sentry.ApiSentry | None = None
     osu_id = os.getenv("ID")
     osu_secret = os.getenv("SECRET")
 
-    api = api_sentry.ApiSentry(osu_id, osu_secret)
+    if osu_id is not None and osu_secret is not None:
+        api = api_sentry.ApiSentry(osu_id, osu_secret)
+        
+    else:
+        api = api_sentry.ApiSentry()
+        api.manual_osu_user_authentication()
 
     s = util.Settings()
     s.load()
 
     print(main_menu)
     match util.required_input(
-        input_message="> ",
-        possible_options = {1, 2, 3, 4},
-        verification_method=int
+            input_message="> ",
+            possible_options = {1, 2, 3, 4},
+            verification_method=int
         ):
         case 1:
             osu_collector = osu_collector_dumper.OsuCollectorDump(s, api)
@@ -74,8 +79,8 @@ def main(s: util.Settings | None = None, api: api_sentry.ApiSentry | None = None
             osu_collector.user_set_id()
 
             if util.required_input(
-                input_message="Use a filter? [y/n]: ",
-                possible_options = {"y", "n"}
+                    input_message="Use a filter? [y/n]: ",
+                    possible_options = {"y", "n"}
             ) == "y":
                 osu_collector.user_set_filter()
                 osu_collector.user_get_dump_with_filter()

@@ -15,53 +15,194 @@ JSON = dict[str, Any]
 
 logger = logging.getLogger(__name__)
 
+class Settings:
+    # Default output file data
+    collection_name: str = "collection"
+    collection_path: Path = Path(".").resolve(strict=True)
+    modified_last: float = time.time()
 
-# TODO log errors
-# TODO should be able to detect if its an invalid beatmap id/set id
-def get_json_response(url: str, payload: dict[str, Any] | None = None, rate_limit: float | None = 1)\
-        -> JSON | JSON_LIST | NoReturn:
-    try:
-        r = requests.get(url, params=payload)
-        r.raise_for_status()
+    # Default actions for self modification
+    rename_collection: bool = False
+    move_current_collection: bool = False
+    
+    # Default actions when parsing file
+    ignore_invalid_map_ids: bool = False
+    ignore_invalid_set_ids: bool = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        super(Settings, self).__init__(*args, **kwargs)
+
+    def save(self) -> None:
+        """Basic method to handle serialization of the class."""
+        self.modified_last = time.time()
+        with open("../settings.json", "w", encoding="utf8") as f:
+            json.dump(self.__dict__, f, indent=4)
+
+            logger.info("[[FILE I/O]] - settings.json saved")
+
+    def load(self) -> None:
+        """Basic method to deserialize a saved JSON."""
+        with open("../settings.json", "wr", encoding="utf8") as f:
+            settings = json.load(f)
+
+        for k, v in settings.items():
+            setattr(self, k, v)
+
+        logger.info("[[FILE I/O]] - settings.json loaded")
+
+    def get(self) -> JSON:
+        """Basic method to get a dictionary of the current settings."""
+        if time.time() - os.stat("../settings.json").st_mtime == self.modified_last:
+            self.load()
+
+            logger.info("[[FILE I/O]] - settings.json loaded")
+
+        return self.__dict__
+
+    def set_collection_name(
+                            self,
+                            name: str, 
+                            rename_collection: bool | None = None
+                        ) -> None:
+        """Method to set the name of the generated collection.
+
+        Parameters
+        ----------
+        name : str
+            Name to use when generating collections
+        rename_collection : bool | None, optional
+            Rename the previously generated collection, if found, by default None
+        """
+        if rename_collection or self.rename_collection:
+            with contextlib.suppress(FileNotFoundError):
+                os.rename(
+                            self.collection_path / f"{self.collection_name}.db",
+                            self.collection_path / f"{name}.db"
+                )
+
+                logger.info(f"[[FILE I/O]] - {self.collection_name}.db renamed to {name}.db")
+        
+        self.collection_name = name
+        
+        logger.info(f"[[SETTINGS]] - collection_name changed to: {name}")
+
+    def set_collection_path(
+                            self,
+                            path: os.PathLike | str, 
+                            move_current_collection: bool = False
+                        ) -> None:
+        """Method to set the path of the generated collection.
+
+        Parameters
+        ----------
+        path : os.PathLike | str
+            Path to use when generating collections
+        move_current_collection : bool, optional
+            Move the collection to the new path, by default False
+        """
+        path = Path(path).resolve(strict=True)
+
+        if move_current_collection or self.move_current_collection:
+            with contextlib.suppress(FileNotFoundError):
+                shutil.move(
+                    self.collection_path / f"{self.collection_name}.db",
+                    path / f"{self.collection_name}.db"
+                )
+
+                logger.info(f"[[FILE I/O]] - {self.collection_name}.db moved to {path}")
+
+        self.collection_path = path
+
+        logger.info(f"[[SETTINGS]] - collection_path changed to: {path}")
+
+    def user_set_collection_name(self) -> None:
+        """User-friendly method to set the name of the collection."""
+        try:
+            collection_name = None
+            while (collection_name := input("Enter new collection name: ")).isalnum():
+                print(f"Invalid collection name (Must be alphanumeric): {collection_name}")
+
+            self.set_collection_name(collection_name, self.rename_collection)
+
+            self.save()
+        
+        except KeyboardInterrupt:
+            return None
+
+
+    def user_set_collection_path(self) -> None:
+        """User-friendly method to set the path of the collection."""
+        try:
+            collection_path = None
+            while collection_path is None:
+                collection_path = Path(input("Enter new collection path: "))
+
+                if not collection_path.is_dir:
+                    collection_path = None
+                    continue
+
+                try:
+                    collection_path = collection_path.resolve(strict=True)
+                
+                except FileNotFoundError:
+                    if required_input(f"{collection_path} not found, create new dir?: ", {'y', 'n'}) == "y":
+                        collection_path.mkdir(exist_ok=True)
+                        collection_path.resolve(strict=True)
+                    
+                    else:
+                        collection_path = None
+                        continue
+
+            self.set_collection_path(collection_path, self.move_current_collection)
+
+            self.save()
+
+        except KeyboardInterrupt:
+            return None
+
+    def user_set_rename_collection(self) -> None:
+        """User-friendly method to set if the previously generated collection should be renamed."""
+        user_input = required_input("Rename collection?: [y/n]", {"y", "n"}).lower()
+        
+        try:
+            self.rename_collection = user_input == "y"
+            self.save()
+
+        except KeyboardInterrupt:
+            return None
+
+    def user_set_move_current_collection(self) -> None:
+        """User-friendly method to set if the previously generated collection should be moved."""
+        user_input = required_input("Move current collection?: [y/n]", {"y", "n"}).lower()
 
         try:
-            r_json = r.json()
+            self.move_current_collection = user_input == "y"
+            self.save()
 
-        # Raised if json received is invalid
-        except JSONDecodeError:
-            logger.error("JSON decoding failed")
-            raise Exception("JSON decoding failed")
+        except KeyboardInterrupt:
+            return None
 
-        except Exception as e:
-            logger.error(f"An unknown error occurred: {e}")
-            raise Exception(f"An unknown error occurred: {e}")
+    def user_set_ignore_invalid_map_ids(self) -> None:
+        """User-friendly method to set if invalid map IDs should be ignored."""
+        user_input = required_input("Ignore invalid map IDs?: [y/n]", {"y", "n"}).lower()
 
-    # Raised if HTTP status code is not 200
-    except HTTPError as http_err:
-        # noinspection PyUnboundLocalVariable
-        if r.status_code == 401 and url.startswith("https://osu.ppy.sh"):
-            logger.error("Invalid osu!api key used")
-            raise HTTPError("Invalid osu!api key used")
+        try:
+            self.ignore_invalid_map_ids = user_input == "y"
+            self.save()
 
-        logger.error(f"HTTP error occurred: {http_err}")
-        raise HTTPError(f"HTTP error occurred: {http_err}")
+        except KeyboardInterrupt:
+            return None
 
-    except Exception as e:
-        logger.error(f"An unknown error occurred: {e}")
-        raise Exception(f"An unknown error occurred: {e}")
+    def user_set_ignore_invalid_set_ids(self) -> None:
+        """User-friendly method to set if invalid set IDs should be ignored."""
+        user_input = required_input("Ignore invalid set IDs?: [y/n]", {"y", "n"}).lower()
 
-    # Ratelimiting (~60/min)
-    time.sleep(rate_limit)
+        try:
+            self.ignore_invalid_set_ids = user_input == "y"
+            self.save()
 
-    # noinspection PyUnboundLocalVariable
-    return r_json
-
-
-def change_default_collection_output_name() -> None:
-    output_collection_name = input("Enter new collection name: ")
-
-    with open("../settings.json", "r") as f:
-        data = json.load(f)
+        except KeyboardInterrupt:
+            return None
 
     collection_path = data["output_collection_path"]
 

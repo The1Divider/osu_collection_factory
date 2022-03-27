@@ -1,10 +1,9 @@
-import json
 import logging
 
-from typing import NoReturn, Literal
+from typing import Literal
 
-from md5_conversion import convert_md5s_to_db
-from util import get_json_response
+import util
+import api_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -13,170 +12,150 @@ filter_menu = """\r
 2) By bpm
 """
 
+class OsuCollectorDump:
+    collection_id: int | None
 
-def osu_collector_dump():
-    # If user wants to sort beatmaps
-    # noinspection PyUnusedLocal
-    use_filter = None
-    while (use_filter := input("Filter collection? (y/n): ").strip().lower()) not in ("y", "n"):
-        print(f"Not a valid input: {use_filter}")
+    min_sr_filter: float | None
+    max_sr_filter: float | None
 
-    if use_filter == "y":
-        osu_collector_dump_with_filter()
+    min_bpm_filter: float | None
+    max_bpm_filter: float | None
 
-    else:
-        collection_id = input("Enter collection ID or URL: ").split("/")[-1]  # TODO possibly cache this?
-        _collector_dump(collection_id)
+    filter_for_dump: Literal["bpm"] | Literal["difficulty_rating"]
 
 
-def osu_collector_dump_with_filter():
-    min_sr_filter, max_sr_filter = None, None
-    min_bpm_filter, max_bpm_filter = None, None
+    def __init__(self, s: util.Settings, api: api_sentry.ApiSentry, *args, **kwargs):
+        super(OsuCollectorDump, self).__init__(*args, **kwargs)
 
-    collection_id = input("Enter collection ID or URL: ").split("/")[-1]
+        self.settings = s
+        self.api = api
 
-    print(filter_menu)
+        self.md5s = set()
+        self.beatmap_ids = set()
 
-    # noinspection PyUnusedLocal
-    user_input = None
-    while (user_input := input(">")) not in ("1", "2"):
-        print(f"Invalid input: {user_input}")
-
-    match user_input:
-        case "1":
-
-            # Get and sanity check min sr
-            min_sr_filter = _filter_verification(filter_name="star rating", sort="min")
-
-            # Get and sanity check max sr
-            max_sr_filter = _filter_verification(filter_name="star rating", sort="max")
-
-        case "2":
-
-            # Get and sanity check min bpm
-            min_bpm_filter = _filter_verification(filter_name="bpm", sort="min")
-
-            # Get and sanity check max bpm
-            max_bpm_filter = _filter_verification(filter_name="bpm", sort="max")
-
-    _collector_dump_with_filter(collection_id, min_sr_filter, max_sr_filter, min_bpm_filter, max_bpm_filter)
-
-
-def _filter_verification(filter_name: str, sort: Literal["min"] | Literal["max"]) -> float | None:
-    f = None
-    while f is None:
-        f = input(f"{sort.capitalize()} {filter_name}: ")
-        if f.strip() == "":
-            if sort == "min":
-                return 0
-            elif sort == "max":
-                print(f"Invalid max {filter_name}: {f} - must be a number")
-                f = None
-                continue
-        try:
-            f = float(f)  # Validates the filter by casting to float
-        except ValueError:
-            print(f"Invalid {filter_name}: {f} - must be a number")
-            f = None
-            continue
-        if f is not None and f < 0:  # Make sure filter is positive
-            print(f"Invalid {filter_name}: {f} - must be greater or equal to 0")
-            f = None
-            continue
-    return f
-
-
-def _collector_dump(collection_id) -> NoReturn:
-    # Defaults
-    beatmap_ids = set()
-    md5s = set()
-
-    logger.info(f"Collecting beatmaps from osu!Collector collection {collection_id}:")
-
-    url = f"https://osucollector.com/api/collections/{collection_id}"
-    collection = get_json_response(url=url)
-
-    # Collect beatmap ids and checksums from the json
-    for beatmap_set in collection["beatmapsets"]:
-        for beatmap in beatmap_set["beatmaps"]:
-            beatmap_ids.add(str(beatmap["id"]))
-            md5s.add(beatmap["checksum"])
-
-    # Log ids
-    for i, j in zip(beatmap_ids, md5s):
-        logger.info(f"Dumped id: {i} - md5: {j}")
-    logger.info("Collected successfully\n")
-
-    # Dump checksums
-    convert_md5s_to_db(md5s)
-
-
-def _collector_dump_with_filter(collection_id: int | str,
-                                diff_filter_min: float | None = None, diff_filter_max: float | None = None,
-                                bpm_filter_min: int | None = None, bpm_filter_max: int | None = None) -> NoReturn:
-    # Defaults
-    has_more = True
-    cursor = "0"
-    md5s = set()
-    beatmap_ids = set()
-
-    # Filter booleans
-    using_diff_filter = diff_filter_min is not None or diff_filter_max is not None or diff_filter_max == 0
-    using_bpm_filter = bpm_filter_min is not None or bpm_filter_max is not None or bpm_filter_max == 0
-
-    logger.info(f"Collecting beatmaps from osu!Collector collection {collection_id}:")
-    if using_diff_filter:
-        logger.info(f"Using star rating filter: {diff_filter_min}->{diff_filter_max}")
-    elif using_bpm_filter:
-        logger.info(f"Using bpm filter: {bpm_filter_min}->{bpm_filter_max}")
-    else:
-        logger.warning("Using unknown filter")
-
-    while has_more:
-        if using_diff_filter:
-            url = f"https://osucollector.com/api/collections/{collection_id}/beatmapsv2?"
-            payload = {
-                "cursor": cursor,
-                "perPage": "100",
-                "sortBy": "difficulty_rating",
-                "filterMin": diff_filter_min if diff_filter_min is not None else 0,
-                "filterMax": diff_filter_max
-            }
-
-        elif using_bpm_filter:
-            url = f"https://osucollector.com/api/collections/{collection_id}/beatmapsv2?"
-            payload = {
-                "cursor": cursor,
-                "perPage": "100",
-                "sortBy": "bpm",
-                "filterMin": bpm_filter_min if bpm_filter_min is not None else 0,
-                "filterMax": bpm_filter_max
-            }
-
+    @property
+    def url(self) -> str:
+        """str: The url for the osu!collector collection"""
+        if self.collection_id is not None:
+            return f"https://osucollector.com/api/collections/{self.collection_id}"
+            
         else:
-            logger.error("Unsupported filter used")
-            raise NotImplementedError("Filter not supported")
+            raise NotImplementedError
 
-        collection = get_json_response(url=url, payload=payload)
+    # TODO cache this
+    def log_ids(self) -> None:
+        """Logs recieved beatmaps"""
+        for i, j in zip(self.beatmap_ids, self.md5s):
+            logger.info(f"[INFO] - Dumped id: {i} - md5: {j}")
+        logger.info("[INFO] - Collected successfully\n")
+
+    def user_set_filter(self) -> None:
+        """User-friendly method to set the filter used for the dump."""
+        self.filter_for_dump=util.required_input(
+            input_message="Choose filter: ",
+            possible_options={"bpm", "difficulty_rating"},
+            invalid_input_message="Invalid filter (bpm/difficulty_rating): "
+        )
+
+    def get_dump(self):
+        """Method to get the osu!collector dump."""
+        logger.info(f"[INFO] - Collecting beatmaps from osu!Collector collection id: {self.collection_id}")
+
+        collection = self.api.make_api_request(
+            url=self.url,
+            method="GET", 
+            osu_api_request=False
+        )
+
+        if isinstance(collection, list):
+            collection = collection[0]
 
         # Collect beatmap ids and checksums from the json
-        for beatmap in collection["beatmaps"]:
-            beatmap_ids.add(beatmap["url"].split("/")[-1])
-            md5s.add(beatmap["checksum"])
+        for beatmap_set in collection["beatmapsets"]:
+            for beatmap in beatmap_set["beatmaps"]:
+                self.beatmap_ids.add(str(beatmap["id"]))
+                self.md5s.add(beatmap["checksum"])
 
-        # Log ids
-        for i, j in zip(beatmap_ids, md5s):
-            logger.info(f"Dumped id: {i} - md5: {j}")
+    def get_dump_with_filter(self):
+        """Method to get the osu!collector dump for a given filter."""
+        has_more = True
+        cursor = "0"
 
-        # If more is available to request
-        has_more = collection["hasMore"]
-        if has_more:
-            cursor = collection["nextPageCursor"]
+        url = f"{self.url}/beatmapsv2?"
 
-            # Log cursor
-            logger.info(f"Next cursor: {cursor}")
+        filter_dict = {
+            "bpm": {
+                "name": "bpm",
+                "min": self.min_bpm_filter, 
+                "max": self.max_bpm_filter
+            },
+            "difficulty_rating": {
+                "name": "star rating",
+                "min": self.min_sr_filter,
+                "max": self.max_sr_filter
+            }
+        }
 
-    logger.info("Collected successfully\n")
+        logger.info(f"[INFO] - Collecting beatmaps from osu!Collector collection {self.collection_id}:")
 
-    # Dump checksums
-    convert_md5s_to_db(md5s)
+        logger.info(f"[INFO] - Using {filter_dict[self.filter_for_dump]['name']}: {filter_dict[self.filter_for_dump]['min']} -> {filter_dict[self.filter_for_dump]['max']}")
+
+        while has_more:        
+            payload = {
+                "cursor": cursor,
+                "perPage": "100",
+                "sortBy": self.filter_for_dump,
+                "filterMin": filter_dict[self.filter_for_dump]["min"],
+                "filterMax": filter_dict[self.filter_for_dump]["max"]
+            }
+
+            collection = self.api.make_api_request(url=url, method="GET", payload=payload, osu_api_request=False)
+            
+            if isinstance(collection, list):
+                collection = collection[0]
+
+            # Collect beatmap ids and checksums from the json
+            for beatmap in collection["beatmaps"]:
+                self.beatmap_ids.add(beatmap["url"].split("/")[-1])
+                self.md5s.add(beatmap["checksum"])
+
+            # Log ids
+            # TODO cache instead
+            for i, j in zip(self.beatmap_ids, self.md5s):
+                logger.info(f"[INFO] - Dumped id: {i} - md5: {j}")
+
+            # If more is available to request
+            has_more = collection["hasMore"]
+            if has_more:
+                cursor = collection["nextPageCursor"]
+
+                logger.info(f"[INFO] - Next cursor: {cursor}")
+
+        logger.info("Collected successfully\n")
+
+    def user_get_dump_with_filter(self):
+        """User-friendly method to get a osu!collector dump with a filter."""
+        match self.filter_for_dump:
+            case "difficulty_rating":
+                self.min_sr_filter, self.max_sr_filter = util.sorted_filter_verification("sr")
+                self.using_sr_filter = True
+
+            case "bpm":
+                self.min_bpm_filter, self.max_bpm_filter = util.sorted_filter_verification("BPM")
+                self.using_bpm_filter = True
+
+            case _:
+                raise NotImplementedError
+
+        self.get_dump_with_filter()
+    
+    def user_set_id(self) -> None:
+        """User-friendly method to set the ID of the collection to dump."""
+        while True:
+            collection_id = input("Enter osu!collector collection ID or URL: ").split("/")[-1]
+            try:
+                self.collection_id = int(collection_id)
+                break
+
+            except ValueError:
+                print(f"Invalid ID or url: {collection_id}")

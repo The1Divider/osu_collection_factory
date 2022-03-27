@@ -204,31 +204,62 @@ class Settings:
         except KeyboardInterrupt:
             return None
 
-    collection_path = data["output_collection_path"]
+def required_input(
+                    input_message: str,
+                    possible_options: set | None = None,
+                    verification_method: Callable[[str], Any] | None = None,
+                    invalid_input_message: str | None = None
+                ) -> Any:
+    """Utility loop to get a required input from the user.
 
-    # Removes extension if needed
-    if output_collection_name.endswith(".db"):  # or ...
-        output_collection_name = output_collection_name.replace(".db", "")
+    Parameters
+    ----------
+    input_message : str
+        Prompt to display
+    possible_options : set | None, optional
+        Set containing all accepted input options, by default None
+    verification_method : Callable[[str], Any] | None, optional
+        Function or method to verify the input against, by default None
+    invalid_input_message : str | None, optional
+        Prompt to display if input is invalid, by default None
+        (defaults to f"Invalid input: {user_input}")
 
+    Returns
+    -------
+    Any
+        The user's accepted input
+    """
     # noinspection PyUnusedLocal
     user_input = None
-    while (user_input := input("Rename current collection? (y/n): ")) not in ('y', 'n'):
-        print(f"Invalid input: {user_input}")
+    while user_input is None:
+        try:   
+            user_input = input(input_message)
 
-    if user_input == 'y':
-        os.rename(Path(collection_path).joinpath(data["output_collection_name"] + ".db"),
-                  Path(collection_path).joinpath(output_collection_name + ".db"))
+            if verification_method is not None:
+                try:
+                    user_input = verification_method(user_input)
 
-    with open("../settings.json", "w") as f:
-        data["output_collection_name"] = output_collection_name
-        json.dump(data, f, indent=4)
+                except NameError as e:
+                    logger.critical(f"[CRITICAL] - INVALID VERFICATION METHOD: {verification_method}")
+                    logger.info("[INFO] - Verfication method must be of type Callable[[str], Any]")
 
-    logger.info(f"output_collection_name changed to: {output_collection_name}")
+            if possible_options is not None:
+                while user_input not in possible_options:
+                    print(
+                        "Invalid input: {user_input}"
+                    ) if invalid_input_message is None else invalid_input_message + user_input
+
+                    user_input = input(user_input)
 
 
-# TODO should ask if user wants to create new dir
-def change_default_collection_output_path() -> None:
-    output_collection_path = input("Enter new collection path: ")
+        except Exception as e:
+            logger.warning("[WARNING] - User input caused the following exception:")
+            logger.exception(f"[EXCEPTION] - {e}")
+            print(f"Invalid input: {user_input}" if invalid_input_message is None else f"{invalid_input_message}{user_input}")
+
+            user_input = None
+
+    return user_input
 
     with open("../settings.json", "r") as f:
         data = json.load(f)

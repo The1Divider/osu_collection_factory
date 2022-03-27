@@ -261,33 +261,75 @@ def required_input(
 
     return user_input
 
-    with open("../settings.json", "r") as f:
-        data = json.load(f)
+# https://github.com/enricobacis/limit
+def limit(limit, every=1):
+    """This decorator factory creates a decorator that can be applied to
+    functions in order to limit the rate the function can be invoked.
+    The rate is `limit` over `every`, where limit is the number of
+    invocation allowed every `every` seconds.
+    limit(4, 60) creates a decorator that limit the function calls
+    to 4 per minute. If not specified, every defaults to 1 second."""
 
-    collection_name = data["output_collection_name"]
+    def limit_decorator(fn):
+        """This is the actual decorator that performs the rate-limiting."""
+        semaphore = threading.Semaphore(limit)
 
-    if not Path(output_collection_path).is_dir():
-        print(f"Invalid dir: {output_collection_path}")
-        return
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            semaphore.acquire()
 
-    try:
-        Path(output_collection_path + collection_name)
+            try:
+                return fn(*args, **kwargs)
 
-    except(OSError, RuntimeError):
-        pass
+            finally:  # ensure semaphore release
+                timer = threading.Timer(every, semaphore.release)
+                timer.setDaemon(True)  # allows the timer to be canceled on exit
+                timer.start()
 
-    finally:
-        # noinspection PyUnusedLocal
-        user_input = None
-        while (user_input := input("Move current collection to new Path? (y/n): ")) not in ('y', 'n'):
-            print(f"Invalid input: {user_input}")
+        return wrapper
 
-        if user_input == 'y':
-            shutil.move(Path(data["output_collection_path"]).joinpath(collection_name + ".db"),
-                        Path(output_collection_path).joinpath(collection_name + ".db"))
+    return limit_decorator
 
-    with open("../settings.json", "w") as f:
-        data["output_collection_path"] = output_collection_path
-        json.dump(data, f, indent=4)
+def sorted_filter_verification(filter_name: str) -> tuple[float, float]:
+    """Verify values for filters with ranges.
 
-    logger.info(f"output_collection_path changed to: {output_collection_path}")
+    Parameters
+    ----------
+    filter_name : str
+        Name of the filter being used.
+
+    Returns
+    -------
+    tuple[float, float]
+        Min and max values.
+    """
+    min_input, max_input = None, None
+    while min_input is None or max_input is None:
+        if min_input is None:
+            min_input = required_input(
+                input_message=f"Min {filter_name}: ",
+                verification_method=float, 
+                invalid_input_message="Invalid min (Must be a positive decimal number): "
+            )
+
+            if min_input >= 0:
+                min_input = None
+                print(f"Invalid {filter_name} (Must be positive): {min_input}")
+                continue
+        
+        if max_input is None:
+            max_input = required_input(
+                input_message=f"Max {filter_name}: ",
+                verification_method=float, 
+                invalid_input_message="Invalid max (Must be a positive decimal number): "
+            )
+
+            if max_input >= 0:
+                max_input = None
+                print(f"Invalid {filter_name} (Must be positive): {max_input}")
+                continue
+        
+        break
+    
+
+    return min_input, max_input

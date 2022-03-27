@@ -13,6 +13,8 @@ venv*/
 .venv36
 
 # user files
+.env
+
 settings.json
 list.txt
 log.txt

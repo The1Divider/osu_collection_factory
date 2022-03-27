@@ -3,17 +3,15 @@ import json
 import time
 import shutil
 import logging
-import requests
+import functools
+import threading
+import contextlib
 
 from pathlib import Path
-from json import JSONDecodeError
-from typing import Any, NoReturn
-from requests.exceptions import HTTPError
-
+from typing import Any, Callable
 
 # Constants
 JSON = dict[str, Any]
-JSON_LIST = list[JSON]
 
 logger = logging.getLogger(__name__)
 

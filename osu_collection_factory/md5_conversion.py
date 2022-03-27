@@ -1,19 +1,29 @@
-import json
 import logging
 
 from pathlib import Path
+from typing import Sequence
+
+import util
 
 logger = logging.getLogger(__name__)
 
 
-def convert_md5s_to_db(md5s: set):
-    with open("../settings.json", "r") as d:
-        data = json.load(d)
-        name = data["output_collection_name"]
+def convert_md5s_to_db(s: util.Settings, md5s: Sequence[str]):
+    """Function to convert a sequence of md5s to the .db file format.
 
-    path = Path(data["output_collection_path"]).joinpath(name + ".db")
+    Parameters
+    ----------
+    s : util.Settings
+        Settings to use
+    md5s : Sequence[str]
+        Squence of map md5s
+    """
+    settings = s.get()
 
-    logger.info("Starting MD5 to DB conversion")
+    name = settings["collection_name"]
+    path = Path(f"{settings['collection_path']}/{name}/.db") 
+
+    logger.info("[INFO] - Starting MD5 to DB conversion")
 
     with open(path, "wb") as f:
         f.write(b"\x00\x00\x00\x00")  # arbitrary osu! version
@@ -26,4 +36,4 @@ def convert_md5s_to_db(md5s: set):
             f.write(b"\x0b ")  # spacer
             f.write(md5.encode())  # md5
 
-    logger.info("MD5 to DB conversion successful")
+    logger.info("[INFO] - MD5 to DB conversion successful")

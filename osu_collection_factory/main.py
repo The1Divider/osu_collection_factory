@@ -27,81 +27,162 @@ osu! Collection Factory
 ----------------------------------------
 1) Create collection from osu!collector
 2) Create collection from file
-3) Change collection settings
+3) Change Factory settings
 4) Quit
 """
 
 settings_menu = Template("""\r
 Settings
 ---------------------
-1) Change output collection name: Current name $output_collection_name
-2) Change output collection path: Current path $output_collection_path
-3) Back
+1) Change output collection name: Current name - $collection_name
+2) Change output collection path: Current path - $collection_path
+3) Rename last generated collection on collection name change?: $rename_collection
+4) Move last generated collection to new path on collection path change?: $move_current_collection
+5) Ignore invalid map IDs? : $ignore_invalid_map_ids
+6) Ignore invalid set IDs? : $ignore_invalid_set_ids
+7) Back
 """)
 
 
-def main():
+def main(s: util.Settings | None = None, api: api_sentry.ApiSentry | None = None):
+    """'Main' user-friendly function to assist with navigation.
+
+    Parameters
+    ----------
+    s : util.Settings | None, optional
+        Default settings to use, creates new instance if None, by default None
+    api : api_sentry.ApiSentry | None, optional
+        Default api sentry to use, creates new instance if None, by default None
+    """
+    osu_id = os.getenv("ID")
+    osu_secret = os.getenv("SECRET")
+
+    api = api_sentry.ApiSentry(osu_id, osu_secret)
+
+    s = util.Settings()
+    s.load()
+
     print(main_menu)
+    match util.required_input(
+        input_message="> ",
+        possible_options = {1, 2, 3, 4},
+        verification_method=int
+        ):
+        case 1:
+            osu_collector = osu_collector_dumper.OsuCollectorDump(s, api)
 
-    # noinspection PyUnusedLocal
-    user_choice = None
-    while (user_choice := input("> ")) not in ("1", "2", "3", "4"):
-        print(f"Invalid option {user_choice}")
+            osu_collector.user_set_id()
 
-    match user_choice:
-        case '1':
-            osu_collector_dumper.osu_collector_dump()
-            main()
-        case '2':
-            parse_ids_from_file.parse_file()
-            main()
-        case '3':
-            settings()
-        case '4':
+            if util.required_input(
+                input_message="Use a filter? [y/n]: ",
+                possible_options = {"y", "n"}
+            ) == "y":
+                osu_collector.user_set_filter()
+                osu_collector.user_get_dump_with_filter()
+
+            else:
+                osu_collector.get_dump()
+
+            osu_collector.log_ids()
+
+            # TODO this allows for flexibility if we want to allow dumping of multiple collections into 1 
+            # (/different collections in the .db/etc)
+
+            md5_conversion.convert_md5s_to_db(s=s, md5s=list(osu_collector.md5s))
+
+        case 2:
+            file_path = None
+
+            parser = osu_link_parser.ParseOsuLinksFromFile(s=s, api=api)
+
+            while True:
+                try:
+                    file_path = input("Enter file path (default-./list.txt): ")
+
+                    parser.set_current_file(file_path)
+                    break
+
+                except FileNotFoundError:
+                    print(f"Invalid file path: {file_path}")
+
+            parser.parse_plaintext()
+
+            md5_conversion.convert_md5s_to_db(s=s, md5s=list(parser.md5s))
+
+        case 3:
+            s = settings(s)
+
+        case 4:
             quit(0)
+
         case _:
-            raise Exception("This shouldn't be reached")
+            quit(1)
+
+    main(s, api)
 
 
-def settings():
-    with open("../settings.json", "r") as f:
-        data = json.load(f)
-        output_collection_name = data["output_collection_name"]
-        output_collection_path = data["output_collection_path"]
+def settings(s: util.Settings | None = None) -> util.Settings:
+    """User-friendly function to see and set the Factory's settings.
 
-    print(settings_menu.substitute(output_collection_name=output_collection_name,
-                                   output_collection_path=output_collection_path))
+    Parameters
+    ----------
+    s : util.Settings | None, optional
+        Settings to use, creates new instance if None, by default None
 
-    # noinspection PyUnusedLocal
-    user_choice = None
-    while (user_choice := input("> ")) not in ("1", "2", "3"):
-        print(f"Invalid option {user_choice}")
+    Returns
+    -------
+    util.Settings
+        Returns current settings
+    """
+    if s is None:
+        s = util.Settings()
 
-    match user_choice:
-        case '1':
-            util.change_default_collection_output_name()
-            settings()
-        case '2':
-            util.change_default_collection_output_path()
-            settings()
-        case '3':
-            main()
-        case _:
-            raise Exception("This shouldn't be reached")
+    s_dict = s.get()
 
+    print(
+        settings_menu.substitute(
+            collection_name=s_dict["collection_name"],
+            collection_path=s_dict["collection_path"],
+            rename_collection=s_dict["rename_collection"],
+            move_current_collection=s_dict["move_current_collection"],
+            ignore_invalid_map_ids=s_dict["ignore_invalid_map_ids"],
+            ignore_invalid_set_ids=s_dict["ignore_invalid_set_ids"]
+        )
+    )
+    try:
+        match util.required_input(
+            input_message="> ",
+            possible_options = {i for i in range(7)},
+            verification_method=int
+            ):
+            case 1:
+                s.user_set_collection_name()
+
+            case 2:
+                s.user_set_collection_path()
+
+            case 3:
+                s.user_set_rename_collection()
+
+            case 4:
+                s.user_set_move_current_collection()
+            
+            case 5:
+                s.user_set_ignore_invalid_map_ids()
+
+            case 6:
+                s.user_set_ignore_invalid_set_ids()
+
+            case 7:
+                return s
+
+            case _:
+                quit(1)
+
+    except KeyboardInterrupt:
+        main()
+
+    return settings(s)
 
 if __name__ == "__main__":
-    # Writes default settings if 'settings.json' doesn't exist
-    try:
-        Path("../settings.json").resolve(strict=True)
-
-    except (OSError, RuntimeError, FileNotFoundError):
-        default_settings = {
-            "output_collection_name": "Collection",
-            "output_collection_path": ".."
-        }
-
-        with open("../settings.json", "w") as f:
-            json.dump(default_settings, f, indent=4)
-
     main()
